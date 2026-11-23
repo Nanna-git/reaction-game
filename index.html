@@ -127,7 +127,7 @@ p { margin: 0; }
   font-weight: 700;
   letter-spacing: -0.01em;
 }
-.brand-mark { width: 22px; height: 22px; fill: var(--accent); }
+.brand-mark { width: 28px; height: 28px; object-fit: contain; flex: none; }
 
 .topbar-best { color: var(--text-2); font-size: 14px; }
 .topbar-best .mono { color: var(--text); margin-left: 6px; }
@@ -365,9 +365,7 @@ main { display: grid; gap: 16px; }
     <div class="app">
       <header class="topbar">
         <h1 class="brand">
-          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
-            <polygon points="16,2 29,9.5 29,22.5 16,30 3,22.5 3,9.5" />
-          </svg>
+          <img class="brand-mark" src="favicon.png?v=2" alt="" width="28" height="28" />
           Reflex
         </h1>
         <p class="topbar-best">Best <span id="header-best" class="mono">—</span></p>

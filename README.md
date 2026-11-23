@@ -2,10 +2,6 @@
 
 A reaction-time game with a three.js scene. Wait for the scene to turn green, then click, tap or press Space as fast as you can. Play five rounds, see your average, and try to beat your personal best.
 
-**[Live demo](#)** · ![Screenshot](docs/screenshot.png)
-
-> Replace the demo link and screenshot above once deployed. A short GIF showing the four states (wait, go, too soon, result) works well here.
-
 ## Features
 
 - **Full game loop:** idle → wait → go → result, with a "Too soon" state for early presses.

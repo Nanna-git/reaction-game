@@ -6,7 +6,8 @@
     <title>Reflex · Reaction Timer</title>
     <meta name="description" content="Test your reaction time. Wait for green, then click, tap or press Space as fast as you can." />
     <meta name="theme-color" content="#0F1419" />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9.5 29,22.5 16,30 3,22.5 3,9.5' fill='%236C8CFF'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/png" href="favicon.png?v=2" />
+    <link rel="apple-touch-icon" href="apple-touch-icon.png?v=2" />
 
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -848,6 +849,38 @@ const PRESETS = {
 
 const SATELLITES_PER_KIND = 6;
 const EASE_RATE = 6; // higher = snappier easing
+// Self-glow is kept low on the hero so it doesn't wash out the reflections.
+const HERO_GLOW_SCALE = 0.45;
+
+/**
+ * A tiny "photo studio" of bright panels, baked once into an environment map.
+ * Reflecting it is what gives the hero its glossy highlights, without loading
+ * an HDR file or any three.js addons.
+ */
+function buildStudio() {
+  const studio = new THREE.Scene();
+  const panel = new THREE.PlaneGeometry(1, 1);
+  const softbox = (hex, strength, x, y, z, w, h) => {
+    const material = new THREE.MeshBasicMaterial({ color: new THREE.Color(hex).multiplyScalar(strength), side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(panel, material);
+    mesh.position.set(x, y, z);
+    mesh.scale.set(w, h, 1);
+    mesh.lookAt(0, 0, 0);
+    studio.add(mesh);
+  };
+  softbox(0xffffff, 6, 0, 4, 2, 6, 1.5); // overhead strip: the main sheen
+  softbox(0xffffff, 3, -4, 1, 3, 1.5, 4); // left key
+  softbox(0xc9d6ff, 2, 4, -0.5, 2, 1.5, 5); // cool right rim
+  softbox(0xffffff, 0.8, 0, -3, -4, 8, 2); // faint bounce from behind
+  return studio;
+}
+
+function disposeScene(root) {
+  root.traverse((obj) => {
+    obj.geometry?.dispose();
+    obj.material?.dispose();
+  });
+}
 
 /**
  * Builds the decorative scene. Throws if WebGL can't be initialised; the caller
@@ -876,16 +909,27 @@ function createScene(canvas, { reducedMotion = false, onContextLost } = {}) {
   const rim = new THREE.PointLight(STATE_COLORS.idle, 18, 12, 2);
   rim.position.set(-2.5, -1.5, 3);
   scene.add(rim);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const studio = buildStudio();
+  const envMap = pmrem.fromScene(studio, 0.04).texture;
+  disposeScene(studio);
+  pmrem.dispose();
 
   // Hero: low-poly icosahedron + a faint wireframe shell, grouped so shake/scale apply to both.
   const hero = new THREE.Group();
   const heroGeometry = new THREE.IcosahedronGeometry(1.15, 1);
-  const heroMaterial = new THREE.MeshStandardMaterial({
+  // Glossy, lacquered finish: a clear coat over a slightly metallic tinted base.
+  // Flat shading keeps the facets, so each one catches the light as it turns.
+  const heroMaterial = new THREE.MeshPhysicalMaterial({
     color: STATE_COLORS.idle,
     emissive: STATE_COLORS.idle,
-    emissiveIntensity: PRESETS.idle.glow,
-    roughness: 0.38,
-    metalness: 0.12,
+    emissiveIntensity: PRESETS.idle.glow * HERO_GLOW_SCALE,
+    roughness: 0.18,
+    metalness: 0.3,
+    clearcoat: 1,
+    clearcoatRoughness: 0.04,
+    envMap,
+    envMapIntensity: 1.1,
     flatShading: true,
   });
   const heroMesh = new THREE.Mesh(heroGeometry, heroMaterial);
@@ -950,7 +994,7 @@ function createScene(canvas, { reducedMotion = false, onContextLost } = {}) {
   function applyMaterials() {
     heroMaterial.color.copy(color);
     heroMaterial.emissive.copy(color);
-    heroMaterial.emissiveIntensity = current.glow;
+    heroMaterial.emissiveIntensity = current.glow * HERO_GLOW_SCALE;
     shellMaterial.color.copy(color);
     satelliteMaterial.emissive.copy(color);
     satelliteMaterial.emissiveIntensity = 0.08 + current.glow * 0.25;
@@ -1090,6 +1134,7 @@ function createScene(canvas, { reducedMotion = false, onContextLost } = {}) {
     shellGeometry.dispose();
     satelliteGeometries.forEach((g) => g.dispose());
     [heroMaterial, shellMaterial, satelliteMaterial].forEach((m) => m.dispose());
+    envMap.dispose();
     renderer.dispose();
   }
 

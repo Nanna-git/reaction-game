@@ -1,0 +1,1318 @@
+<!doctype html>
+<html lang="en" data-state="idle">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Reflex · Reaction Timer</title>
+    <meta name="description" content="Test your reaction time. Wait for green, then click, tap or press Space as fast as you can." />
+    <meta name="theme-color" content="#0F1419" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpolygon points='16,2 29,9.5 29,22.5 16,30 3,22.5 3,9.5' fill='%236C8CFF'/%3E%3C/svg%3E" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500;700&display=swap"
+    />
+    <style>
+:root {
+  --bg: #0f1419;
+  --surface: #1a2129;
+  --border: #2a343e;
+  --text: #f2f5f7;
+  --text-2: #9aa7b2;
+  --accent: #6c8cff;
+  --waiting: #c93a3f;
+  --go: #1f9d5c;
+  --soon: #f5a524;
+
+  /* Set per state below. --state-ink is the text colour that passes contrast on --state-color. */
+  --state-color: var(--accent);
+  --state-ink: var(--bg);
+
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+  --radius: 16px;
+  --ease: 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
+
+  color-scheme: dark;
+}
+
+[data-state='waiting'] { --state-color: var(--waiting); --state-ink: var(--text); }
+[data-state='ready'] { --state-color: var(--go); --state-ink: var(--bg); }
+[data-state='tooSoon'] { --state-color: var(--soon); --state-ink: var(--bg); }
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html,
+body { margin: 0; }
+
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background: var(--bg);
+  color: var(--text);
+  font: 400 16px/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+p { margin: 0; }
+
+.mono,
+.readout,
+.slot-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.visually-hidden {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.skip-link {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 10;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 600;
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
+
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ---------------------------------------------------------------- Layout */
+
+.app {
+  display: grid;
+  gap: 16px;
+  width: min(100%, 960px);
+  margin: 0 auto;
+  padding: max(12px, env(safe-area-inset-top)) clamp(12px, 3vw, 32px) max(16px, env(safe-area-inset-bottom));
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.brand-mark { width: 22px; height: 22px; fill: var(--accent); }
+
+.topbar-best { color: var(--text-2); font-size: 14px; }
+.topbar-best .mono { color: var(--text); margin-left: 6px; }
+
+main { display: grid; gap: 16px; }
+
+/* ----------------------------------------------------------------- Stage */
+
+.stage {
+  position: relative;
+  display: grid;
+  min-height: clamp(440px, 64vh, 640px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  /* Fast, single-fire taps: no double-tap zoom delay, no highlight, no selection. */
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  transition: background-color var(--ease), border-color var(--ease);
+}
+.stage:focus-visible { outline-offset: 4px; }
+
+[data-state='waiting'] .stage,
+[data-state='ready'] .stage,
+[data-state='tooSoon'] .stage { border-color: var(--state-color); }
+
+.scene {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  opacity: 0;
+  transition: opacity 400ms ease;
+}
+[data-renderer='webgl'] .scene { opacity: 1; }
+
+.hud {
+  position: relative;
+  align-self: end;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 64px 20px 24px;
+  text-align: center;
+  /* Scrim keeps text contrast independent of what the 3D scene shows behind it. */
+  background: linear-gradient(to top, rgb(15 20 25 / 0.94) 0%, rgb(15 20 25 / 0.86) 55%, rgb(15 20 25 / 0) 100%);
+  pointer-events: none;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  border: 1px solid var(--state-color);
+  border-radius: 999px;
+  background: rgb(15 20 25 / 0.7);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--state-color);
+}
+
+.prompt {
+  font-size: clamp(24px, 4.5vw, 32px);
+  font-weight: 700;
+  line-height: 1.2;
+  letter-spacing: -0.015em;
+}
+
+.readout {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  line-height: 1;
+  margin-top: 4px;
+}
+.readout-value {
+  font-size: clamp(72px, 14vw, 96px);
+  font-weight: 700;
+  letter-spacing: -0.04em;
+}
+.readout-unit { font-size: 24px; font-weight: 500; color: var(--text-2); }
+.readout-label { color: var(--text-2); font-size: 14px; }
+
+.rating {
+  padding: 2px 10px;
+  border-radius: 6px;
+  background: rgb(108 140 255 / 0.16);
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.hint { color: var(--text-2); font-size: 14px; margin-top: 4px; }
+
+/* Keep the number area stable while there's nothing to show. */
+[data-state='waiting'] .readout,
+[data-state='ready'] .readout,
+[data-state='tooSoon'] .readout { visibility: hidden; }
+[data-state='waiting'] .readout-label,
+[data-state='ready'] .readout-label,
+[data-state='tooSoon'] .readout-label { visibility: hidden; }
+
+/* -------------------------------------------- Flat fallback (no WebGL) */
+
+[data-renderer='flat'] .scene { display: none; }
+[data-renderer='flat'][data-state='waiting'] .stage,
+[data-renderer='flat'][data-state='ready'] .stage,
+[data-renderer='flat'][data-state='tooSoon'] .stage { background: var(--state-color); }
+[data-renderer='flat'] .hud {
+  align-self: center;
+  padding-top: 24px;
+  background: none;
+}
+[data-renderer='flat'][data-state='waiting'] .hud,
+[data-renderer='flat'][data-state='ready'] .hud,
+[data-renderer='flat'][data-state='tooSoon'] .hud { color: var(--state-ink); }
+[data-renderer='flat'][data-state='waiting'] .hint,
+[data-renderer='flat'][data-state='ready'] .hint,
+[data-renderer='flat'][data-state='tooSoon'] .hint { color: var(--state-ink); }
+/* "Ready" must flip instantly, in both renderers. */
+[data-state='ready'] .stage { transition: none; }
+
+/* ----------------------------------------------------------------- Stats */
+
+.stats { display: grid; gap: 12px; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+.stat {
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.stat dt { color: var(--text-2); font-size: 14px; }
+.stat dd { margin: 2px 0 0; font-size: 22px; font-weight: 700; }
+.stat-unit { color: var(--text-2); font-size: 14px; font-weight: 500; }
+
+.slots {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.slot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 4px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text-2);
+}
+.slot-label { font-size: 14px; }
+.slot-value { font-size: 16px; font-weight: 700; }
+.slot.is-filled { border-style: solid; background: var(--surface); color: var(--text); }
+.slot.is-current { border-color: var(--accent); }
+.slot.is-best { border-color: var(--go); }
+.slot.is-best .slot-label::after { content: ' ★'; color: var(--go); }
+
+.controls { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.btn {
+  min-height: 44px;
+  padding: 0 18px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: 600 14px var(--font-ui);
+  cursor: pointer;
+  transition: border-color var(--ease), background-color var(--ease);
+}
+.btn:hover { border-color: var(--accent); }
+.btn-quiet { background: transparent; color: var(--text-2); }
+.btn-quiet:hover { color: var(--text); }
+
+.footer { color: var(--text-2); font-size: 14px; text-align: center; }
+
+/* ------------------------------------------------------------ Responsive */
+
+@media (max-width: 420px) {
+  .stat { padding: 10px; }
+  .stat dd { font-size: 18px; }
+  .stat dt { font-size: 13px; }
+  .slot-value { font-size: 14px; }
+  .hud { padding-inline: 12px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
+
+</style>
+
+    <!-- three.js pinned to an exact version on a CDN. See README "Design decisions". -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js"
+        }
+      }
+    </script>
+      </head>
+  <body>
+    <a class="skip-link" href="#stage">Skip to game</a>
+
+    <div class="app">
+      <header class="topbar">
+        <h1 class="brand">
+          <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true" focusable="false">
+            <polygon points="16,2 29,9.5 29,22.5 16,30 3,22.5 3,9.5" />
+          </svg>
+          Reflex
+        </h1>
+        <p class="topbar-best">Best <span id="header-best" class="mono">—</span></p>
+      </header>
+
+      <main>
+        <div
+          id="stage"
+          class="stage"
+          role="button"
+          tabindex="0"
+          aria-label="Reaction area. Press Space, Enter, click or tap."
+          aria-describedby="prompt hint"
+        >
+          <canvas id="scene" class="scene" aria-hidden="true"></canvas>
+
+          <div class="hud">
+            <p id="state-badge" class="badge"><span class="badge-dot" aria-hidden="true"></span><span class="badge-text">Idle</span></p>
+            <p id="prompt" class="prompt">Press to start</p>
+            <p class="readout">
+              <span id="readout-value" class="readout-value">—</span><span class="readout-unit">ms</span>
+            </p>
+            <p id="readout-label" class="readout-label">Reaction time</p>
+            <p id="rating" class="rating" hidden></p>
+            <p id="hint" class="hint">Click, tap or press Space. Wait for green, then react.</p>
+          </div>
+        </div>
+
+        <section class="stats" aria-labelledby="stats-title">
+          <h2 id="stats-title" class="visually-hidden">Session stats</h2>
+          <dl class="stat-grid">
+            <div class="stat">
+              <dt>Round</dt>
+              <dd id="stat-round" class="mono">0 / 5</dd>
+            </div>
+            <div class="stat">
+              <dt>Average</dt>
+              <dd><span id="stat-average" class="mono">—</span> <span class="stat-unit">ms</span></dd>
+            </div>
+            <div class="stat">
+              <dt>Personal best</dt>
+              <dd><span id="stat-best" class="mono">—</span> <span class="stat-unit">ms</span></dd>
+            </div>
+          </dl>
+
+          <ol id="round-slots" class="slots" aria-label="Round times in milliseconds">
+            <li class="slot"><span class="slot-label">R1</span><span class="slot-value mono">—</span></li>
+            <li class="slot"><span class="slot-label">R2</span><span class="slot-value mono">—</span></li>
+            <li class="slot"><span class="slot-label">R3</span><span class="slot-value mono">—</span></li>
+            <li class="slot"><span class="slot-label">R4</span><span class="slot-value mono">—</span></li>
+            <li class="slot"><span class="slot-label">R5</span><span class="slot-value mono">—</span></li>
+          </ol>
+
+          <div class="controls">
+            <button id="new-session" type="button" class="btn">New session</button>
+            <button id="reset-best" type="button" class="btn btn-quiet">Reset best</button>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <p>Space / Enter to play · Esc cancels a round · Switching tabs resets the round.</p>
+      </footer>
+    </div>
+
+    <div id="live-polite" class="visually-hidden" aria-live="polite" aria-atomic="true"></div>
+    <div id="live-assertive" class="visually-hidden" aria-live="assertive" aria-atomic="true"></div>
+  <script type="module">
+/**
+ * Reaction-timer game logic as an explicit state machine.
+ *
+ * Pure module: no DOM, no three.js, no timers. The caller owns time:
+ * it schedules the random delay, calls `go(clock)` on the frame that paints
+ * the "ready" state, and passes input-event timestamps to `press()`.
+ * This keeps the logic deterministic and unit-testable.
+ */
+
+const State = Object.freeze({
+  IDLE: 'idle',
+  WAITING: 'waiting',
+  READY: 'ready',
+  TOO_SOON: 'tooSoon',
+  RESULT: 'result',
+});
+
+const ROUNDS_PER_SESSION = 5;
+const MIN_DELAY_MS = 2000;
+const MAX_DELAY_MS = 5000;
+
+/** Rating bands, fastest first. `max` is an exclusive upper bound in ms. */
+const RATINGS = Object.freeze([
+  { max: 200, label: 'Lightning' },
+  { max: 250, label: 'Excellent' },
+  { max: 300, label: 'Great' },
+  { max: 375, label: 'Good' },
+  { max: 500, label: 'Average' },
+  { max: Infinity, label: 'Keep practicing' },
+]);
+
+const randomBuffer = new Uint32Array(1);
+
+/**
+ * Uniform float in [0, 1) from the CSPRNG. Math.random is predictable enough
+ * in principle that a determined player could learn its rhythm; this cannot be gamed.
+ */
+function secureRandom() {
+  if (globalThis.crypto?.getRandomValues) {
+    globalThis.crypto.getRandomValues(randomBuffer);
+    return randomBuffer[0] / 0x1_0000_0000;
+  }
+  return Math.random();
+}
+
+/** Continuous (not stepped) delay so there is no rhythm to anticipate. */
+function randomDelay(random = secureRandom, min = MIN_DELAY_MS, max = MAX_DELAY_MS) {
+  return min + random() * (max - min);
+}
+
+function average(times) {
+  if (!times.length) return null;
+  let sum = 0;
+  for (const t of times) sum += t;
+  return sum / times.length;
+}
+
+function rate(ms) {
+  if (ms == null || !Number.isFinite(ms)) return null;
+  return RATINGS.find((band) => ms < band.max).label;
+}
+
+class ReactionGame {
+  #state = State.IDLE;
+  #listeners = new Set();
+  #times = [];
+  #delay = null;
+  #startedAt = null;
+  #lastTime = null;
+  #best;
+  #isNewBest = false;
+  #rounds;
+  #random;
+  #minDelay;
+  #maxDelay;
+
+  constructor({
+    rounds = ROUNDS_PER_SESSION,
+    minDelay = MIN_DELAY_MS,
+    maxDelay = MAX_DELAY_MS,
+    random = secureRandom,
+    personalBest = null,
+  } = {}) {
+    this.#rounds = rounds;
+    this.#minDelay = minDelay;
+    this.#maxDelay = maxDelay;
+    this.#random = random;
+    this.#best = Number.isFinite(personalBest) && personalBest > 0 ? personalBest : null;
+  }
+
+  get state() {
+    return this.#state;
+  }
+
+  get sessionComplete() {
+    return this.#times.length >= this.#rounds;
+  }
+
+  snapshot() {
+    const avg = average(this.#times);
+    return Object.freeze({
+      state: this.#state,
+      delay: this.#delay,
+      lastTime: this.#lastTime,
+      times: Object.freeze([...this.#times]),
+      round: this.#times.length,
+      rounds: this.#rounds,
+      average: avg,
+      best: this.#best,
+      isNewBest: this.#isNewBest,
+      sessionComplete: this.sessionComplete,
+      rating: rate(this.sessionComplete ? avg : this.#lastTime),
+    });
+  }
+
+  subscribe(listener) {
+    this.#listeners.add(listener);
+    return () => this.#listeners.delete(listener);
+  }
+
+  /** Begin a round (or a new session, if the last one is complete). */
+  start() {
+    if (this.sessionComplete) this.#times = [];
+    this.#delay = randomDelay(this.#random, this.#minDelay, this.#maxDelay);
+    this.#startedAt = null;
+    this.#isNewBest = false;
+    this.#transition(State.WAITING);
+    return this.#delay;
+  }
+
+  /**
+   * Switch to READY. Listeners run synchronously (they apply the visual change),
+   * and only then is `clock()` read, so the start time is taken after the
+   * "go" frame has been drawn rather than when the timeout fired.
+   * Returns false if the round was cancelled or ended early in the meantime.
+   */
+  go(clock) {
+    if (this.#state !== State.WAITING) return false;
+    this.#transition(State.READY);
+    this.#startedAt = clock();
+    return true;
+  }
+
+  /**
+   * Handle one input (click, tap, Space). `timestamp` must come from the
+   * input event, in the same timebase as the clock passed to go().
+   * Returns the action taken: 'start' | 'tooSoon' | 'record'.
+   */
+  press(timestamp) {
+    switch (this.#state) {
+      case State.IDLE:
+      case State.TOO_SOON:
+      case State.RESULT:
+        this.start();
+        return 'start';
+      case State.WAITING:
+        this.#tooSoon();
+        return 'tooSoon';
+      case State.READY:
+        // An input that happened before the go frame was painted (e.g. queued
+        // while the frame rendered) is an anticipation, not a reaction.
+        if (this.#startedAt == null || timestamp < this.#startedAt) {
+          this.#tooSoon();
+          return 'tooSoon';
+        }
+        this.#record(timestamp - this.#startedAt);
+        return 'record';
+      default:
+        throw new Error(`Unknown state: ${this.#state}`);
+    }
+  }
+
+  /** Abort an in-progress round (tab hidden, window blurred, Esc). Results stay. */
+  cancel() {
+    if (this.#state === State.WAITING || this.#state === State.READY || this.#state === State.TOO_SOON) {
+      this.#delay = null;
+      this.#startedAt = null;
+      this.#transition(State.IDLE);
+      return true;
+    }
+    return false;
+  }
+
+  newSession() {
+    this.#times = [];
+    this.#lastTime = null;
+    this.#delay = null;
+    this.#startedAt = null;
+    this.#isNewBest = false;
+    this.#transition(State.IDLE);
+  }
+
+  resetBest() {
+    this.#best = null;
+    this.#isNewBest = false;
+    this.#notify();
+  }
+
+  #tooSoon() {
+    this.#delay = null;
+    this.#startedAt = null;
+    this.#transition(State.TOO_SOON);
+  }
+
+  #record(ms) {
+    this.#times.push(ms);
+    this.#lastTime = ms;
+    this.#isNewBest = this.#best == null || ms < this.#best;
+    if (this.#isNewBest) this.#best = ms;
+    this.#startedAt = null;
+    this.#transition(State.RESULT);
+  }
+
+  #transition(next) {
+    this.#state = next;
+    this.#notify();
+  }
+
+  #notify() {
+    const snap = this.snapshot();
+    for (const listener of this.#listeners) listener(snap);
+  }
+}
+
+// localStorage can throw on access (Safari private mode, blocked cookies,
+// sandboxed iframes) or on write (quota). Every call is guarded so the
+// game never breaks because persistence is unavailable.
+
+const KEY = 'reaction-timer.best-ms';
+
+function defaultStorage() {
+  try {
+    return globalThis.localStorage ?? null;
+  } catch {
+    return null;
+  }
+}
+
+function loadBest(storage = defaultStorage()) {
+  try {
+    const raw = storage?.getItem(KEY);
+    if (raw == null) return null;
+    const ms = Number(raw);
+    return Number.isFinite(ms) && ms > 0 ? ms : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveBest(ms, storage = defaultStorage()) {
+  try {
+    if (!storage || !Number.isFinite(ms) || ms <= 0) return false;
+    storage.setItem(KEY, String(Math.round(ms * 10) / 10));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clearBest(storage = defaultStorage()) {
+  try {
+    storage?.removeItem(KEY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+
+const COPY = {
+  [State.IDLE]: { badge: 'Idle', prompt: 'Press to start', hint: 'Click, tap or press Space. Wait for green, then react.' },
+  [State.WAITING]: { badge: 'Wait', prompt: 'Wait…', hint: 'Don’t press yet. Wait for green.' },
+  [State.READY]: { badge: 'Go', prompt: 'Click now!', hint: 'Press now!' },
+  [State.TOO_SOON]: { badge: 'Too soon', prompt: 'Too soon!', hint: 'Not counted. Press to retry this round.' },
+};
+
+const ms = (value) => (value == null ? '—' : String(Math.round(value)));
+
+/** Renders game snapshots into the HTML overlay. Runs on transitions only, never per frame. */
+function createUI(doc = document) {
+  const $ = (id) => doc.getElementById(id);
+  const el = {
+    root: doc.documentElement,
+    badge: $('state-badge'),
+    prompt: $('prompt'),
+    readoutValue: $('readout-value'),
+    readoutLabel: $('readout-label'),
+    rating: $('rating'),
+    hint: $('hint'),
+    round: $('stat-round'),
+    average: $('stat-average'),
+    best: $('stat-best'),
+    headerBest: $('header-best'),
+    slots: $('round-slots'),
+    politeLive: $('live-polite'),
+    assertiveLive: $('live-assertive'),
+  };
+
+  let lastState = null;
+  let toggle = false;
+
+  // Re-announce identical messages (e.g. two "Too soon" in a row) by
+  // alternating a trailing no-break space, which screen readers ignore.
+  function announce(region, text) {
+    toggle = !toggle;
+    region.textContent = toggle ? text : `${text} `;
+  }
+
+  function renderSlots(snap) {
+    const items = el.slots.children;
+    for (let i = 0; i < items.length; i++) {
+      const t = snap.times[i];
+      const item = items[i];
+      item.querySelector('.slot-value').textContent = t == null ? '—' : `${ms(t)}`;
+      item.classList.toggle('is-filled', t != null);
+      item.classList.toggle('is-best', t != null && t === snap.best);
+      item.classList.toggle('is-current', i === snap.round && !snap.sessionComplete);
+    }
+  }
+
+  function render(snap) {
+    const { state } = snap;
+    el.root.dataset.state = state;
+
+    let copy = COPY[state];
+    let value = null;
+    let label = 'Reaction time';
+    let rating = '';
+
+    if (state === State.RESULT) {
+      if (snap.sessionComplete) {
+        copy = { badge: 'Done', prompt: 'Session complete', hint: 'Press to start a new session.' };
+        value = snap.average;
+        label = `Average of ${snap.rounds} rounds · last ${ms(snap.lastTime)} ms`;
+      } else {
+        copy = {
+          badge: 'Result',
+          prompt: snap.isNewBest ? 'New personal best!' : 'Your reaction time',
+          hint: `Press for round ${snap.round + 1} of ${snap.rounds}.`,
+        };
+        value = snap.lastTime;
+      }
+      rating = snap.rating ?? '';
+    }
+
+    el.badge.querySelector('.badge-text').textContent = copy.badge;
+    el.prompt.textContent = copy.prompt;
+    el.hint.textContent = copy.hint;
+    el.readoutValue.textContent = ms(value);
+    el.readoutLabel.textContent = label;
+    el.rating.textContent = rating;
+    el.rating.hidden = !rating;
+
+    el.round.textContent = `${Math.min(snap.round, snap.rounds)} / ${snap.rounds}`;
+    el.average.textContent = ms(snap.average);
+    el.best.textContent = ms(snap.best);
+    el.headerBest.textContent = snap.best == null ? '—' : `${ms(snap.best)} ms`;
+    renderSlots(snap);
+
+    if (state !== lastState) announceState(snap);
+    lastState = state;
+  }
+
+  function announceState(snap) {
+    switch (snap.state) {
+      case State.WAITING:
+        announce(el.politeLive, 'Wait for green.');
+        break;
+      case State.READY:
+        announce(el.assertiveLive, 'Go! Press now.');
+        break;
+      case State.TOO_SOON:
+        announce(el.assertiveLive, 'Too soon. Not counted. Press to retry.');
+        break;
+      case State.RESULT: {
+        const best = snap.isNewBest ? ' New personal best.' : '';
+        const text = snap.sessionComplete
+          ? `${ms(snap.lastTime)} milliseconds. Session complete. Average ${ms(snap.average)} milliseconds, ${snap.rating}.${best}`
+          : `${ms(snap.lastTime)} milliseconds, ${snap.rating}.${best} Round ${snap.round} of ${snap.rounds}.`;
+        announce(el.politeLive, text);
+        break;
+      }
+      case State.IDLE:
+        if (lastState) announce(el.politeLive, 'Round reset. Press to start.');
+        break;
+    }
+  }
+
+  return { render, announce: (text) => announce(el.politeLive, text) };
+}
+
+function makeSceneModule(THREE) {
+
+// Shared with the CSS design tokens in styles.css.
+const STATE_COLORS = {
+  idle: 0x6c8cff,
+  waiting: 0xc93a3f,
+  ready: 0x1f9d5c,
+  tooSoon: 0xf5a524,
+  result: 0x6c8cff,
+};
+
+// Per-state animation targets. Everything except `ready` is eased toward these.
+const PRESETS = {
+  idle: { spin: 0.25, drift: 1.0, scale: 1.0, pulseAmp: 0.0, pulseHz: 0.0, glow: 0.18 },
+  waiting: { spin: 0.1, drift: 0.82, scale: 0.94, pulseAmp: 0.035, pulseHz: 0.9, glow: 0.4 },
+  ready: { spin: 1.4, drift: 1.08, scale: 1.06, pulseAmp: 0.0, pulseHz: 0.0, glow: 0.7 },
+  tooSoon: { spin: 0.15, drift: 1.0, scale: 0.98, pulseAmp: 0.0, pulseHz: 0.0, glow: 0.45 },
+  result: { spin: 0.12, drift: 1.0, scale: 1.0, pulseAmp: 0.0, pulseHz: 0.0, glow: 0.25 },
+};
+
+const SATELLITES_PER_KIND = 6;
+const EASE_RATE = 6; // higher = snappier easing
+
+/**
+ * Builds the decorative scene. Throws if WebGL can't be initialised; the caller
+ * falls back to the flat-colour UI. Returns a small imperative API driven by main.js.
+ */
+function createScene(canvas, { reducedMotion = false, onContextLost } = {}) {
+  const renderer = new THREE.WebGLRenderer({
+    canvas,
+    // MSAA is wasted fill-rate on dense displays; DPR 2 already smooths edges.
+    antialias: window.devicePixelRatio < 2,
+    powerPreference: 'default',
+  });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x0f1419, 1);
+
+  const scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x0f1419, 6, 13);
+
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 40);
+  camera.position.set(0, 0, 6.5);
+
+  scene.add(new THREE.HemisphereLight(0xc9d6ff, 0x0f1419, 0.9));
+  const key = new THREE.DirectionalLight(0xffffff, 1.8);
+  key.position.set(3, 4, 5);
+  scene.add(key);
+  const rim = new THREE.PointLight(STATE_COLORS.idle, 18, 12, 2);
+  rim.position.set(-2.5, -1.5, 3);
+  scene.add(rim);
+
+  // Hero: low-poly icosahedron + a faint wireframe shell, grouped so shake/scale apply to both.
+  const hero = new THREE.Group();
+  const heroGeometry = new THREE.IcosahedronGeometry(1.15, 1);
+  const heroMaterial = new THREE.MeshStandardMaterial({
+    color: STATE_COLORS.idle,
+    emissive: STATE_COLORS.idle,
+    emissiveIntensity: PRESETS.idle.glow,
+    roughness: 0.38,
+    metalness: 0.12,
+    flatShading: true,
+  });
+  const heroMesh = new THREE.Mesh(heroGeometry, heroMaterial);
+  const shellGeometry = new THREE.EdgesGeometry(new THREE.IcosahedronGeometry(1.42, 1));
+  const shellMaterial = new THREE.LineBasicMaterial({ color: STATE_COLORS.idle, transparent: true, opacity: 0.28 });
+  const shell = new THREE.LineSegments(shellGeometry, shellMaterial);
+  hero.add(heroMesh, shell);
+  scene.add(hero);
+
+  // Background shapes: three instanced meshes = three draw calls for 18 shapes.
+  const satelliteMaterial = new THREE.MeshStandardMaterial({
+    color: 0x3b4858,
+    emissive: STATE_COLORS.idle,
+    emissiveIntensity: 0.12,
+    roughness: 0.6,
+    flatShading: true,
+  });
+  const satelliteGeometries = [
+    new THREE.SphereGeometry(0.16, 12, 8),
+    new THREE.OctahedronGeometry(0.22, 0),
+    new THREE.TorusGeometry(0.22, 0.05, 6, 20),
+  ];
+  const satellites = satelliteGeometries.map((geometry) => {
+    const mesh = new THREE.InstancedMesh(geometry, satelliteMaterial, SATELLITES_PER_KIND);
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(mesh);
+    return mesh;
+  });
+
+  // Fixed layout data, generated once: base position, phase, speed, size.
+  const count = SATELLITES_PER_KIND * satellites.length;
+  const base = new Float32Array(count * 3);
+  const phase = new Float32Array(count);
+  const speed = new Float32Array(count);
+  const size = new Float32Array(count);
+  for (let i = 0; i < count; i++) {
+    const theta = (i / count) * Math.PI * 2 + Math.random() * 0.4;
+    const radius = 2.4 + Math.random() * 1.8;
+    base[i * 3] = Math.cos(theta) * radius;
+    base[i * 3 + 1] = Math.sin(theta) * radius * 0.65;
+    base[i * 3 + 2] = -1.5 - Math.random() * 3;
+    phase[i] = Math.random() * Math.PI * 2;
+    speed[i] = 0.3 + Math.random() * 0.5;
+    size[i] = 0.7 + Math.random() * 0.6;
+  }
+
+  // Animation state. Preallocated so the frame loop never allocates.
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color(STATE_COLORS.idle);
+  const targetColor = new THREE.Color(STATE_COLORS.idle);
+  const current = { ...PRESETS.idle };
+  let target = PRESETS.idle;
+  let burst = 0; // additive scale impulse, decays to 0
+  let shake = 0; // positional jitter amplitude, decays to 0
+  let spinKick = 0; // extra spin, decays to 0
+  let motionTime = 0; // advances only when motion is allowed
+  let lastNow = 0;
+  let reduced = reducedMotion;
+  let needsRender = true;
+  let lost = false;
+
+  function applyMaterials() {
+    heroMaterial.color.copy(color);
+    heroMaterial.emissive.copy(color);
+    heroMaterial.emissiveIntensity = current.glow;
+    shellMaterial.color.copy(color);
+    satelliteMaterial.emissive.copy(color);
+    satelliteMaterial.emissiveIntensity = 0.08 + current.glow * 0.25;
+    rim.color.copy(color);
+  }
+
+  function snapToTarget() {
+    color.copy(targetColor);
+    Object.assign(current, target);
+  }
+
+  function setState(state, snap) {
+    target = PRESETS[state] ?? PRESETS.idle;
+    targetColor.setHex(STATE_COLORS[state] ?? STATE_COLORS.idle);
+    needsRender = true;
+
+    if (state === 'ready') {
+      // The "go" signal must be unambiguous on the very first frame: no easing.
+      snapToTarget();
+      if (!reduced) {
+        burst = 0.32;
+        spinKick = 4;
+      }
+    } else if (state === 'tooSoon' && !reduced) {
+      shake = 0.16;
+    } else if (state === 'result' && !reduced && snap) {
+      // Faster = bigger pulse: 150 ms → full strength, 500 ms+ → minimal.
+      const ms = snap.sessionComplete ? snap.average : snap.lastTime;
+      const strength = THREE.MathUtils.clamp((500 - ms) / 350, 0, 1);
+      burst = 0.06 + 0.34 * strength;
+    }
+  }
+
+  function setReducedMotion(value) {
+    reduced = value;
+    if (reduced) {
+      burst = 0;
+      shake = 0;
+      spinKick = 0;
+    }
+    needsRender = true;
+  }
+
+  function resize() {
+    const { clientWidth: w, clientHeight: h } = canvas;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    // Pull back on portrait screens so the hero and satellites still fit.
+    camera.position.z = camera.aspect < 1 ? 6.5 / Math.max(camera.aspect, 0.5) * 0.8 : 6.5;
+    // Aim below the hero so it sits above the text overlay at the bottom.
+    const offset = camera.aspect < 1 ? 1.3 : 0.8;
+    camera.position.y = -offset;
+    camera.lookAt(0, -offset, 0);
+    camera.updateProjectionMatrix();
+    needsRender = true;
+  }
+
+  const resizeObserver = new ResizeObserver(resize);
+  resizeObserver.observe(canvas);
+  resize();
+
+  function onLost(event) {
+    event.preventDefault();
+    lost = true;
+    onContextLost?.();
+  }
+  canvas.addEventListener('webglcontextlost', onLost);
+
+  function frame(now) {
+    if (lost) return;
+    const dt = lastNow ? Math.min((now - lastNow) / 1000, 0.1) : 0;
+    lastNow = now;
+    const k = 1 - Math.exp(-EASE_RATE * dt);
+
+    // Ease colour and scalar targets.
+    const colorDelta =
+      Math.abs(color.r - targetColor.r) + Math.abs(color.g - targetColor.g) + Math.abs(color.b - targetColor.b);
+    color.lerp(targetColor, k);
+    current.glow += (target.glow - current.glow) * k;
+
+    if (reduced) {
+      // Colour only. Skip rendering entirely once the colour has settled.
+      if (!needsRender && colorDelta < 0.002) return;
+      needsRender = colorDelta >= 0.002;
+      applyMaterials();
+      renderer.render(scene, camera);
+      return;
+    }
+
+    current.spin += (target.spin - current.spin) * k;
+    current.drift += (target.drift - current.drift) * k;
+    current.scale += (target.scale - current.scale) * k;
+    current.pulseAmp += (target.pulseAmp - current.pulseAmp) * k;
+    current.pulseHz += (target.pulseHz - current.pulseHz) * k;
+
+    const decay = Math.exp(-5 * dt);
+    burst *= decay;
+    spinKick *= decay;
+    shake *= Math.exp(-9 * dt);
+    motionTime += dt;
+
+    const spin = current.spin + spinKick;
+    hero.rotation.y += spin * dt;
+    hero.rotation.x += spin * 0.55 * dt;
+    const pulse = current.pulseAmp * Math.sin(motionTime * Math.PI * 2 * current.pulseHz);
+    hero.scale.setScalar(current.scale * (1 + pulse + burst));
+    hero.position.x = shake * Math.sin(motionTime * 70);
+    hero.position.y = shake * 0.6 * Math.cos(motionTime * 53);
+
+    let i = 0;
+    for (const mesh of satellites) {
+      for (let j = 0; j < SATELLITES_PER_KIND; j++, i++) {
+        const t = motionTime * speed[i] + phase[i];
+        dummy.position.set(
+          base[i * 3] * current.drift,
+          base[i * 3 + 1] * current.drift + Math.sin(t) * 0.18,
+          base[i * 3 + 2],
+        );
+        dummy.rotation.set(t * 0.7, t, 0);
+        dummy.scale.setScalar(size[i]);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(j, dummy.matrix);
+      }
+      mesh.instanceMatrix.needsUpdate = true;
+    }
+
+    applyMaterials();
+    renderer.render(scene, camera);
+    needsRender = false;
+  }
+
+  function dispose() {
+    resizeObserver.disconnect();
+    canvas.removeEventListener('webglcontextlost', onLost);
+    heroGeometry.dispose();
+    shellGeometry.dispose();
+    satelliteGeometries.forEach((g) => g.dispose());
+    [heroMaterial, shellMaterial, satelliteMaterial].forEach((m) => m.dispose());
+    renderer.dispose();
+  }
+
+  // Satellites need one matrix pass before the first paint even if motion is reduced.
+  const wasReduced = reduced;
+  reduced = false;
+  frame(performance.now());
+  reduced = wasReduced;
+  lastNow = 0;
+
+  return {
+    setState,
+    setReducedMotion,
+    frame,
+    /** Forget the last frame time so a resumed loop doesn't see a huge dt. */
+    resetClock: () => {
+      lastNow = 0;
+    },
+    dispose,
+  };
+}
+
+return { createScene };
+}
+
+
+const stage = document.getElementById('stage');
+const canvas = document.getElementById('scene');
+const root = document.documentElement;
+const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+
+const game = new ReactionGame({ personalBest: loadBest() });
+const ui = createUI(document);
+
+let scene = null;
+let goTimer = 0;
+let goPending = false;
+let frameId = 0;
+
+// ---------------------------------------------------------------------------
+// Game → view
+// ---------------------------------------------------------------------------
+
+game.subscribe((snap) => {
+  ui.render(snap);
+  scene?.setState(snap.state, snap);
+
+  if (snap.state === State.WAITING) scheduleGo(snap.delay);
+  else cancelGo();
+
+  if (snap.state === State.RESULT && snap.isNewBest) saveBest(snap.best);
+});
+
+function scheduleGo(delay) {
+  cancelGo();
+  // The timeout only *requests* the go frame; the timer starts in tick().
+  goTimer = window.setTimeout(() => {
+    goPending = true;
+    ensureLoop();
+  }, delay);
+}
+
+function cancelGo() {
+  window.clearTimeout(goTimer);
+  goPending = false;
+}
+
+// ---------------------------------------------------------------------------
+// Frame loop. One rAF loop drives both the 3D scene and the go transition.
+// ---------------------------------------------------------------------------
+
+function tick(now) {
+  frameId = 0;
+  let rendered = false;
+
+  if (goPending) {
+    goPending = false;
+    // game.go() notifies listeners first (DOM + scene switch to "ready"), then
+    // calls this clock. We draw the green frame, then read performance.now(),
+    // so the start timestamp belongs to the frame that is about to be painted.
+    game.go(() => {
+      scene?.frame(now);
+      rendered = true;
+      return performance.now();
+    });
+  }
+
+  if (!rendered) scene?.frame(now);
+  if (scene || goPending) ensureLoop();
+}
+
+function ensureLoop() {
+  if (!frameId && !document.hidden) frameId = requestAnimationFrame(tick);
+}
+
+function stopLoop() {
+  if (frameId) cancelAnimationFrame(frameId);
+  frameId = 0;
+}
+
+// ---------------------------------------------------------------------------
+// Input. The timestamp is the first thing read in every handler.
+// ---------------------------------------------------------------------------
+
+function eventTime(event) {
+  const now = performance.now();
+  // event.timeStamp shares performance.now()'s timebase in current browsers and
+  // reflects when the input happened, not when the handler ran. Very old
+  // engines used epoch milliseconds; reject anything not plausibly in our timebase.
+  const t = event.timeStamp;
+  return t > 0 && t <= now ? t : now;
+}
+
+stage.addEventListener('pointerdown', (event) => {
+  const t = eventTime(event);
+  // Primary button / first finger only, so multi-touch and right-clicks never double-fire.
+  if (!event.isPrimary || event.button !== 0) return;
+  // Prevents the follow-up compatibility mouse events and text selection on touch.
+  event.preventDefault();
+  game.press(t);
+});
+
+// Long-press menus on mobile would otherwise interrupt a round.
+stage.addEventListener('contextmenu', (event) => event.preventDefault());
+
+const INTERACTIVE = 'button, a[href], input, select, textarea, [contenteditable="true"]';
+
+window.addEventListener('keydown', (event) => {
+  const t = eventTime(event);
+  const isSpace = event.code === 'Space' || event.key === ' ';
+  const isEnter = event.key === 'Enter';
+  const isEscape = event.key === 'Escape';
+  if (!isSpace && !isEnter && !isEscape) return;
+  if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  // Let real controls (New session, Reset best) keep their native keyboard behaviour.
+  const target = event.target;
+  if (target instanceof Element && target !== stage && target.closest(INTERACTIVE)) return;
+
+  event.preventDefault(); // stop Space from scrolling the page
+  if (event.repeat) return; // a held key is not a new reaction
+
+  if (isEscape) game.cancel();
+  else game.press(t);
+});
+
+// ---------------------------------------------------------------------------
+// Focus / visibility: a round can't be fair if the player can't see it.
+// ---------------------------------------------------------------------------
+
+window.addEventListener('blur', () => game.cancel());
+window.addEventListener('pagehide', () => game.cancel());
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    game.cancel();
+    stopLoop();
+  } else {
+    scene?.resetClock();
+    ensureLoop();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+
+document.getElementById('new-session').addEventListener('click', () => {
+  game.newSession();
+  ui.announce('New session. Press to start.');
+  stage.focus();
+});
+
+document.getElementById('reset-best').addEventListener('click', () => {
+  clearBest();
+  game.resetBest();
+  ui.announce('Personal best cleared.');
+});
+
+// ---------------------------------------------------------------------------
+// 3D scene: progressive enhancement. The game is already playable at this point.
+// ---------------------------------------------------------------------------
+
+function useFlatFallback(reason) {
+  if (reason) console.info(`[reaction-timer] Using flat fallback: ${reason}`);
+  scene?.dispose();
+  scene = null;
+  root.dataset.renderer = 'flat';
+}
+
+function hasWebGL2() {
+  try {
+    const probe = document.createElement('canvas');
+    const gl = probe.getContext('webgl2');
+    gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    return Boolean(gl);
+  } catch {
+    return false;
+  }
+}
+
+async function initScene() {
+  if (!hasWebGL2()) return useFlatFallback('WebGL2 unavailable');
+  try {
+    // Dynamic import: if the CDN is blocked or three.js fails to load, the
+    // rejection lands here instead of breaking the whole page.
+    const { createScene } = makeSceneModule(await import('three'));
+    scene = createScene(canvas, {
+      reducedMotion: reducedMotionQuery.matches,
+      onContextLost: () => useFlatFallback('WebGL context lost'),
+    });
+    scene.setState(game.state, game.snapshot());
+    root.dataset.renderer = 'webgl';
+    ensureLoop();
+  } catch (error) {
+    useFlatFallback(error?.message ?? 'scene failed to initialise');
+  }
+}
+
+reducedMotionQuery.addEventListener('change', (event) => scene?.setReducedMotion(event.matches));
+
+ui.render(game.snapshot());
+initScene();
+
+</script>
+  </body>
+</html>

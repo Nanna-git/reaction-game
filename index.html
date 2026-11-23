@@ -129,6 +129,7 @@ p { margin: 0; }
 }
 .brand-mark { width: 28px; height: 28px; object-fit: contain; flex: none; }
 
+.topbar-right { display: flex; align-items: center; gap: 12px; }
 .topbar-best { color: var(--text-2); font-size: 14px; }
 .topbar-best .mono { color: var(--text); margin-left: 6px; }
 
@@ -327,6 +328,18 @@ main { display: grid; gap: 16px; }
 .btn-quiet { background: transparent; color: var(--text-2); }
 .btn-quiet:hover { color: var(--text); }
 
+.btn-sound {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  color: var(--text-2);
+}
+.btn-sound svg { width: 18px; height: 18px; fill: currentColor; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; }
+.btn-sound[aria-pressed='true'] { color: var(--text); }
+[data-sound='off'] .icon-on,
+[data-sound='on'] .icon-off { display: none; }
+
 .footer { color: var(--text-2); font-size: 14px; text-align: center; }
 
 /* ------------------------------------------------------------ Responsive */
@@ -337,6 +350,7 @@ main { display: grid; gap: 16px; }
   .stat dt { font-size: 13px; }
   .slot-value { font-size: 14px; }
   .hud { padding-inline: 12px; }
+  .sound-label { display: none; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -368,7 +382,14 @@ main { display: grid; gap: 16px; }
           <img class="brand-mark" src="favicon.png?v=2" alt="" width="28" height="28" />
           Reflex
         </h1>
-        <p class="topbar-best">Best <span id="header-best" class="mono">—</span></p>
+        <div class="topbar-right">
+          <p class="topbar-best">Best <span id="header-best" class="mono">—</span></p>
+          <button id="sound-toggle" type="button" class="btn btn-sound" aria-label="Sound" aria-pressed="true" title="Toggle sound (M)">
+            <svg class="icon-on" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none"/></svg>
+            <svg class="icon-off" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9h4l5-4v14l-5-4H4z"/><path d="M16.5 9.5l5 5M21.5 9.5l-5 5" fill="none"/></svg>
+            <span class="sound-label">Sound on</span>
+          </button>
+        </div>
       </header>
 
       <main>
@@ -427,7 +448,7 @@ main { display: grid; gap: 16px; }
       </main>
 
       <footer class="footer">
-        <p>Space / Enter to play · Esc cancels a round · Switching tabs resets the round.</p>
+        <p>Space / Enter to play · M toggles sound · Esc cancels a round · Switching tabs resets the round.</p>
       </footer>
     </div>
 
@@ -825,6 +846,117 @@ function createUI(doc = document) {
   return { render, announce: (text) => announce(el.politeLive, text) };
 }
 
+// Sound effects synthesised with the Web Audio API: no audio files to load.
+// Browsers only allow audio after a user gesture, so unlock() is called from
+// the input handlers (after the reaction timestamp has already been taken).
+
+const MUTE_KEY = 'reaction-timer.muted';
+
+function loadMuted() {
+  try {
+    return globalThis.localStorage?.getItem(MUTE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveMuted(value) {
+  try {
+    globalThis.localStorage?.setItem(MUTE_KEY, value ? '1' : '0');
+  } catch {
+    /* persistence is optional */
+  }
+}
+
+function createSound() {
+  let ctx = null;
+  let master = null;
+  let muted = loadMuted();
+
+  function unlock() {
+    if (!ctx) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (!AudioCtx) return;
+      ctx = new AudioCtx();
+      master = ctx.createGain();
+      master.gain.value = 0.35;
+      master.connect(ctx.destination);
+    }
+    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+  }
+
+  /** One short enveloped note. `at` is seconds from now. */
+  function tone(freq, at, duration, { type = 'sine', gain = 0.5, slideTo } = {}) {
+    const t = ctx.currentTime + at;
+    const osc = ctx.createOscillator();
+    const env = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t);
+    if (slideTo) osc.frequency.exponentialRampToValueAtTime(slideTo, t + duration);
+    env.gain.setValueAtTime(0.0001, t);
+    env.gain.exponentialRampToValueAtTime(gain, t + 0.012);
+    env.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+    osc.connect(env).connect(master);
+    osc.start(t);
+    osc.stop(t + duration + 0.05);
+  }
+
+  const canPlay = () => ctx && !muted && ctx.state !== 'closed';
+
+  const effects = {
+    // Soft low tick: the round has started, wait for green.
+    waiting: () => tone(330, 0, 0.12, { type: 'triangle', gain: 0.35 }),
+    // Two falling buzzes: pressed too early.
+    tooSoon: () => {
+      tone(200, 0, 0.18, { type: 'square', gain: 0.12, slideTo: 120 });
+      tone(170, 0.16, 0.22, { type: 'square', gain: 0.12, slideTo: 100 });
+    },
+    // Two-note chime; faster reactions get a higher pitch.
+    result: (ms) => {
+      const f = Math.min(880, Math.max(440, 880 - (ms - 150) * 1.4));
+      tone(f, 0, 0.16, { gain: 0.45 });
+      tone(f * 1.5, 0.07, 0.28, { gain: 0.35 });
+    },
+    // Rising sparkle for a new personal best.
+    newBest: () => [659, 784, 988, 1319].forEach((f, i) => tone(f, i * 0.07, 0.22, { type: 'triangle', gain: 0.35 })),
+    // Little fanfare when all five rounds are done.
+    complete: () => {
+      [523, 659, 784].forEach((f, i) => tone(f, i * 0.1, 0.2, { type: 'triangle', gain: 0.35 }));
+      [523, 659, 784, 1047].forEach((f) => tone(f, 0.32, 0.6, { gain: 0.18 }));
+    },
+  };
+
+  /** Called on every game transition. The "go" moment is deliberately silent (see README). */
+  function play(snap) {
+    if (!canPlay()) return;
+    switch (snap.state) {
+      case 'waiting':
+        effects.waiting();
+        break;
+      case 'tooSoon':
+        effects.tooSoon();
+        break;
+      case 'result':
+        if (snap.sessionComplete) effects.complete();
+        else if (snap.isNewBest) effects.newBest();
+        else effects.result(snap.lastTime);
+        break;
+    }
+  }
+
+  return {
+    unlock,
+    play,
+    get muted() {
+      return muted;
+    },
+    setMuted(value) {
+      muted = value;
+      saveMuted(value);
+    },
+  };
+}
+
 function makeSceneModule(THREE) {
 
 // Shared with the CSS design tokens in styles.css.
@@ -1166,11 +1298,14 @@ const reducedMotionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
 
 const game = new ReactionGame({ personalBest: loadBest() });
 const ui = createUI(document);
+const sound = createSound();
+const soundToggle = document.getElementById('sound-toggle');
 
 let scene = null;
 let goTimer = 0;
 let goPending = false;
 let frameId = 0;
+let lastState = game.state;
 
 // ---------------------------------------------------------------------------
 // Game → view
@@ -1179,6 +1314,9 @@ let frameId = 0;
 game.subscribe((snap) => {
   ui.render(snap);
   scene?.setState(snap.state, snap);
+  // Only on real transitions (resetBest() re-notifies without changing state).
+  if (snap.state !== lastState) sound.play(snap);
+  lastState = snap.state;
 
   if (snap.state === State.WAITING) scheduleGo(snap.delay);
   else cancelGo();
@@ -1252,6 +1390,7 @@ stage.addEventListener('pointerdown', (event) => {
   if (!event.isPrimary || event.button !== 0) return;
   // Prevents the follow-up compatibility mouse events and text selection on touch.
   event.preventDefault();
+  sound.unlock(); // after the timestamp, so it can't affect the measurement
   game.press(t);
 });
 
@@ -1265,8 +1404,14 @@ window.addEventListener('keydown', (event) => {
   const isSpace = event.code === 'Space' || event.key === ' ';
   const isEnter = event.key === 'Enter';
   const isEscape = event.key === 'Escape';
-  if (!isSpace && !isEnter && !isEscape) return;
+  const isMute = event.key === 'm' || event.key === 'M';
+  if (!isSpace && !isEnter && !isEscape && !isMute) return;
   if (event.ctrlKey || event.metaKey || event.altKey) return;
+
+  if (isMute) {
+    if (!event.repeat) setMuted(!sound.muted);
+    return;
+  }
 
   // Let real controls (New session, Reset best) keep their native keyboard behaviour.
   const target = event.target;
@@ -1275,6 +1420,7 @@ window.addEventListener('keydown', (event) => {
   event.preventDefault(); // stop Space from scrolling the page
   if (event.repeat) return; // a held key is not a new reaction
 
+  sound.unlock();
   if (isEscape) game.cancel();
   else game.press(t);
 });
@@ -1304,6 +1450,19 @@ document.getElementById('new-session').addEventListener('click', () => {
   ui.announce('New session. Press to start.');
   stage.focus();
 });
+
+function setMuted(value) {
+  sound.setMuted(value);
+  soundToggle.setAttribute('aria-pressed', String(!value));
+  soundToggle.querySelector('.sound-label').textContent = value ? 'Sound off' : 'Sound on';
+  root.dataset.sound = value ? 'off' : 'on';
+}
+
+soundToggle.addEventListener('click', () => {
+  sound.unlock();
+  setMuted(!sound.muted);
+});
+setMuted(sound.muted);
 
 document.getElementById('reset-best').addEventListener('click', () => {
   clearBest();
